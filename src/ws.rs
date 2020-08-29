@@ -36,7 +36,7 @@ pub async fn client_connection(
         let msg = match result {
             Ok(msg) => msg,
             Err(e) => {
-                println!("error receiving ws message for id: {}): {}", client_id, e);
+                eprintln!("error receiving ws message for id: {}): {}", client_id, e);
                 break;
             }
         };
@@ -48,7 +48,6 @@ pub async fn client_connection(
 }
 
 async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &Spaces) {
-    println!("received message for {}: {:?}", client_id, msg);
     let message = match msg.to_str() {
         Ok(v) => v,
         Err(_) => return,
@@ -72,13 +71,11 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
             }
         };
 
-        println!("socket request: {}", serde_json::to_string(&socket_request).unwrap());
+        //println!("socket request: {}", serde_json::to_string(&socket_request).unwrap());
 
         match socket_request {
             UpdateRequest::SpaceSet{ space_id } => c.space_id = space_id,
             UpdateRequest::CountUpdate{ mode, value } => {
-
-                println!("Processing count update");
 
                 // Get the space that this client is counting for
                 let mut locked = spaces.write().await;
@@ -90,7 +87,7 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
                     }
                 };
 
-                println!("Matched space: {} ({})", c.space_id, serde_json::to_string(&space).unwrap());
+                //println!("Matched space: {} ({})", c.space_id, serde_json::to_string(&space).unwrap());
 
                 // Update the space's count
                 if mode == "relative" {
@@ -117,6 +114,4 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
                 }
             });
     }
-
-    // Nothing else to do
 }
