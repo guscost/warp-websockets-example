@@ -57,36 +57,50 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
         return;
     }
 
-    let mut update = false;
-    let mut space_id = "".to_owned();
-    let mut count: isize = 0;
-    
-    if let Some(c) = clients.write().await.get_mut(client_id) {
+    let space_id: String;
+    match clients.read().await.get(client_id) {
+        Some(c) => space_id = c.space_id.clone(),
+        None => {
+            eprintln!("no client found for id: {}", client_id);
+            return;
+        }
+    };
 
-        let socket_request: UpdateRequest = match from_str(&message) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("error while parsing message to topics request: {}", e);
-                return;
+    let socket_request: UpdateRequest = match from_str(&message) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error while parsing message to topics request: {}", e);
+            return;
+        }
+    };
+
+    //println!("socket request: {}", serde_json::to_string(&socket_request).unwrap());
+
+    match socket_request {
+
+        // SpaceSet action is "join room" on frontend
+        UpdateRequest::SpaceSet{ space_id } => {
+            // Lock a mutable reference to the client, and update its space id
+            if let Some(c) = clients.write().await.get_mut(client_id) {
+                c.space_id = space_id;
             }
-        };
+        },
 
-        //println!("socket request: {}", serde_json::to_string(&socket_request).unwrap());
+        // CountUpdate action is "relative" or "absolute" and applies to the connected client's space
+        UpdateRequest::CountUpdate{ mode, value } => {
+            let mut count: isize = 0;
 
-        match socket_request {
-            UpdateRequest::SpaceSet{ space_id } => c.space_id = space_id,
-            UpdateRequest::CountUpdate{ mode, value } => {
-
+            // Block-scope this bit so that we release the space write lock ASAP
+            {
                 // Get the space that this client is counting for
                 let mut locked = spaces.write().await;
-                let space = match locked.get_mut(&c.space_id) {
+                let space = match locked.get_mut(&space_id) {
                     Some(s) => s,
                     None => {
-                        locked.insert(c.space_id.clone(), Space { id: c.space_id.clone(), count: 0 });
-                        locked.get_mut(&c.space_id).expect("Error creating new space!")
+                        locked.insert(space_id.clone(), Space { id: space_id.clone(), count: 0 });
+                        locked.get_mut(&space_id).expect("Error creating new space!")
                     }
                 };
-
                 //println!("Matched space: {} ({})", c.space_id, serde_json::to_string(&space).unwrap());
 
                 // Update the space's count
@@ -96,22 +110,18 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
                     space.count = std::cmp::max(value, 0);
                 }
 
-                update = true;
-                space_id = space.id.clone();
+                // Set our mutable variable for broadcast
                 count = space.count;
-            },
-        }
-    }
-    if update {
-        clients
-            .read()
-            .await
-            .iter()
-            .filter(|(_, client)| client.space_id == space_id)
-            .for_each(|(_, client)| {
-                if let Some(sender) = &client.sender {
-                    let _ = sender.send(Ok(Message::text(count.to_string())));
-                }
-            });
+            }
+
+            // Broadcast the count to all clients
+            clients.read().await.iter()
+                .filter(|(_, c)| c.space_id == space_id)
+                .for_each(|(_, c)| {
+                    if let Some(sender) = &c.sender {
+                        let _ = sender.send(Ok(Message::text(count.to_string())));
+                    }
+                });
+        },
     }
 }
