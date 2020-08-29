@@ -7,7 +7,7 @@ use warp::ws::{Message, WebSocket};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum UpdateRequest {
-    SpaceSet { space_id : String },
+    SpaceSet { space_code : String },
     CountUpdate { mode: String, value: isize },
 }
 
@@ -17,21 +17,25 @@ pub async fn client_connection(
     clients: Clients,
     spaces: Spaces,
 ) {
+    // Split the websocket and create a channel for sending outgoing messages
     let client_id = client.id.clone();
     let (client_ws_sender, mut client_ws_rcv) = socket.split();
     let (client_sender, client_rcv) = mpsc::unbounded_channel();
 
+    // Spawn a separate task to forward outgoing messages to the websocket client
     tokio::task::spawn(client_rcv.forward(client_ws_sender).map(|result| {
         if let Err(e) = result {
             eprintln!("error sending websocket msg: {}", e);
         }
     }));
 
+    // Save a "sender" for this outgoing channel with this client, in shared memory
     client.sender = Some(client_sender);
     clients.write().await.insert(client_id.clone(), client);
 
     println!("{} connected", client_id);
 
+    // Handle all messages coming from this client, until the socket is closed
     while let Some(result) = client_ws_rcv.next().await {
         let msg = match result {
             Ok(msg) => msg,
@@ -43,6 +47,7 @@ pub async fn client_connection(
         client_msg(msg, &client_id, &clients, &spaces).await;
     }
 
+    // Remove the client when the socket is closed
     clients.write().await.remove(&client_id);
     println!("{} disconnected", client_id);
 }
@@ -53,19 +58,22 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
         Err(_) => return,
     };
 
+    // Short-circuit for pings so user-friendly clients can send these
     if message == "ping" || message == "ping\n" {
         return;
     }
 
-    let space_id: String;
+    // Validate this client, and store its space code for later
+    let space_code: String;
     match clients.read().await.get(client_id) {
-        Some(c) => space_id = c.space_id.clone(),
+        Some(c) => space_code = c.space_code.clone(),
         None => {
             eprintln!("no client found for id: {}", client_id);
             return;
         }
     };
 
+    // Parse the request
     let socket_request: UpdateRequest = match from_str(&message) {
         Ok(v) => v,
         Err(e) => {
@@ -74,19 +82,19 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
         }
     };
 
-    //println!("socket request: {}", serde_json::to_string(&socket_request).unwrap());
-
+    // Match the request with the UpdateRequest enum
     match socket_request {
 
-        // SpaceSet action is "join room" on frontend
-        UpdateRequest::SpaceSet{ space_id } => {
-            // Lock a mutable reference to the client, and update its space id
+        // SpaceSet action is for joining a space
+        UpdateRequest::SpaceSet{ space_code } => {
+
+            // Lock a mutable reference to the client, and update its space_code
             if let Some(c) = clients.write().await.get_mut(client_id) {
-                c.space_id = space_id;
+                c.space_code = space_code;
             }
         },
 
-        // CountUpdate action is "relative" or "absolute" and applies to the connected client's space
+        // CountUpdate action is either "relative" or "absolute" and applies to the connected client's space
         UpdateRequest::CountUpdate{ mode, value } => {
             let count: isize;
 
@@ -94,14 +102,14 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
             {
                 // Get the space that this client is counting for
                 let mut locked = spaces.write().await;
-                let space = match locked.get_mut(&space_id) {
+                let space = match locked.get_mut(&space_code) {
                     Some(s) => s,
                     None => {
-                        locked.insert(space_id.clone(), Space { id: space_id.clone(), count: 0 });
-                        locked.get_mut(&space_id).expect("Error creating new space!")
+                        locked.insert(space_code.clone(), Space { id: space_code.clone(), count: 0 });
+                        locked.get_mut(&space_code).expect("Error creating new space!")
                     }
                 };
-                //println!("Matched space: {} ({})", c.space_id, serde_json::to_string(&space).unwrap());
+                //println!("Matched space: {} ({})", c.space_code, serde_json::to_string(&space).unwrap());
 
                 // Update the space's count
                 if mode == "relative" {
@@ -116,7 +124,7 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
 
             // Broadcast the count to all clients
             clients.read().await.iter()
-                .filter(|(_, c)| c.space_id == space_id)
+                .filter(|(_, c)| c.space_code == space_code)
                 .for_each(|(_, c)| {
                     if let Some(sender) = &c.sender {
                         let _ = sender.send(Ok(Message::text(count.to_string())));

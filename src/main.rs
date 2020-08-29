@@ -15,7 +15,7 @@ type Spaces = Arc<RwLock<HashMap<String, Space>>>;
 #[derive(Debug, Clone)]
 pub struct Client {
     pub id: String,
-    pub space_id: String,
+    pub space_code: String,
     pub sender: Option<mpsc::UnboundedSender<std::result::Result<Message, warp::Error>>>,
 }
 
@@ -25,12 +25,21 @@ pub struct Space {
     pub count: isize,
 }
 
+fn with_spaces(spaces: Spaces) -> impl Filter<Extract = (Spaces,), Error = Infallible> + Clone {
+    warp::any().map(move || spaces.clone())
+}
+fn with_clients(clients: Clients) -> impl Filter<Extract = (Clients,), Error = Infallible> + Clone {
+    warp::any().map(move || clients.clone())
+}
+
 #[tokio::main]
 async fn main() {
     let clients: Clients = Arc::new(RwLock::new(HashMap::new()));
     let spaces: Spaces = Arc::new(RwLock::new(HashMap::new()));
 
-    let health_route = warp::path!("health").and_then(handler::health_handler);
+    let health_route = warp::path!("health")
+        .and(warp::get())
+        .and_then(handler::health_handler);
 
     let register = warp::path("register");
     let register_routes = register
@@ -57,10 +66,4 @@ async fn main() {
         .with(warp::cors().allow_any_origin());
 
     warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
-}
-fn with_spaces(spaces: Spaces) -> impl Filter<Extract = (Spaces,), Error = Infallible> + Clone {
-    warp::any().map(move || spaces.clone())
-}
-fn with_clients(clients: Clients) -> impl Filter<Extract = (Clients,), Error = Infallible> + Clone {
-    warp::any().map(move || clients.clone())
 }
