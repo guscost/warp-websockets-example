@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
+use serde::{Serialize};
 use tokio::sync::{mpsc, RwLock};
 use warp::{ws::Message, Filter, Rejection};
 
@@ -9,17 +10,25 @@ mod ws;
 
 type Result<T> = std::result::Result<T, Rejection>;
 type Clients = Arc<RwLock<HashMap<String, Client>>>;
+type Spaces = Arc<RwLock<HashMap<String, Space>>>;
 
 #[derive(Debug, Clone)]
 pub struct Client {
-    pub user_id: usize,
-    pub topics: Vec<String>,
+    pub id: String,
+    pub space_id: String,
     pub sender: Option<mpsc::UnboundedSender<std::result::Result<Message, warp::Error>>>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct Space {
+    pub id: String,
+    pub count: isize,
 }
 
 #[tokio::main]
 async fn main() {
     let clients: Clients = Arc::new(RwLock::new(HashMap::new()));
+    let spaces: Spaces = Arc::new(RwLock::new(HashMap::new()));
 
     let health_route = warp::path!("health").and_then(handler::health_handler);
 
@@ -35,26 +44,23 @@ async fn main() {
             .and(with_clients(clients.clone()))
             .and_then(handler::unregister_handler));
 
-    let publish = warp::path!("publish")
-        .and(warp::body::json())
-        .and(with_clients(clients.clone()))
-        .and_then(handler::publish_handler);
-
     let ws_route = warp::path("ws")
         .and(warp::ws())
         .and(warp::path::param())
         .and(with_clients(clients.clone()))
+        .and(with_spaces(spaces.clone()))
         .and_then(handler::ws_handler);
 
     let routes = health_route
         .or(register_routes)
         .or(ws_route)
-        .or(publish)
         .with(warp::cors().allow_any_origin());
 
-    warp::serve(routes).run(([127, 0, 0, 1], 8000)).await;
+    warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
 }
-
+fn with_spaces(spaces: Spaces) -> impl Filter<Extract = (Spaces,), Error = Infallible> + Clone {
+    warp::any().map(move || spaces.clone())
+}
 fn with_clients(clients: Clients) -> impl Filter<Extract = (Clients,), Error = Infallible> + Clone {
     warp::any().map(move || clients.clone())
 }
