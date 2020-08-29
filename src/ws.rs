@@ -88,7 +88,7 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
 
         // CountUpdate action is "relative" or "absolute" and applies to the connected client's space
         UpdateRequest::CountUpdate{ mode, value } => {
-            let mut count: isize = 0;
+            let count: isize;
 
             // Block-scope this bit so that we release the space write lock ASAP
             {
