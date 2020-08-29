@@ -18,7 +18,7 @@ pub async fn register_handler(_body: RegisterRequest, clients: Clients) -> Resul
     let uuid = Uuid::new_v4().simple().to_string();
     register_client(uuid.clone(), clients).await;
     Ok(json(&RegisterResponse {
-        url: format!("ws://192.168.188.114:8000/ws/{}", uuid),
+        url: format!("ws://0.0.0.0:8000/ws/{}", uuid),
     }))
 }
 
