@@ -66,7 +66,7 @@ async fn client_msg(msg: Message, client_id: &str, clients: &Clients, spaces: &S
         let socket_request: UpdateRequest = match from_str(&message) {
             Ok(v) => v,
             Err(e) => {
-                println!("error while parsing message to topics request: {}", e);
+                eprintln!("error while parsing message to topics request: {}", e);
                 return;
             }
         };
